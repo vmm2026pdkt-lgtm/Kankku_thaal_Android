@@ -25,6 +25,7 @@ import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.webkit.WebResourceErrorCompat
 import androidx.webkit.ServiceWorkerClientCompat
 import androidx.webkit.ServiceWorkerControllerCompat
 import androidx.webkit.WebSettingsCompat
@@ -239,7 +240,7 @@ class MainActivity : AppCompatActivity() {
         override fun onReceivedError(
             view: WebView,
             request: WebResourceRequest,
-            error: android.webkit.WebResourceError
+            error: WebResourceErrorCompat
         ) {
             super.onReceivedError(view, request, error)
             // Only react to a failed top-level page load, not a failed sub-resource
@@ -294,7 +295,7 @@ class MainActivity : AppCompatActivity() {
                 .setTitle(fileName)
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-                .setAllowedOverMeteredNetworks(true)
+                .setAllowedOverMetered(true)
                 .setAllowedOverRoaming(true)
             val dm = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
             dm.enqueue(request)
