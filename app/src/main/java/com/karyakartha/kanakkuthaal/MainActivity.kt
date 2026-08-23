@@ -399,24 +399,53 @@ class MainActivity : AppCompatActivity() {
 
     /** Lets the "print preview" popup's window.print() open Android's real print/Save-as-PDF dialog. */
     private inner class PrintBridge(private val target: WebView, private val popupDialog: Dialog) {
+        private var printRequested = false
+
         @JavascriptInterface
         fun requestPrint() {
+            if (printRequested) return
+            printRequested = true
             runOnUiThread {
                 try {
                     val printManager = getSystemService(PRINT_SERVICE) as PrintManager
                     val jobName = "KanakkuThaal_${System.currentTimeMillis()}"
                     val adapter = target.createPrintDocumentAdapter(jobName)
-                    printManager.print(jobName, adapter, PrintAttributes.Builder().build())
+                    val job = printManager.print(jobName, adapter, PrintAttributes.Builder().build())
+                    waitForPrintJobThenDismiss(job, popupDialog)
                 } catch (e: Exception) {
                     Log.e("KanakkuThaal", "Print failed", e)
                     Toast.makeText(this@MainActivity, "அச்சிட முடியவில்லை", Toast.LENGTH_SHORT).show()
-                } finally {
-                    // The system print sheet has its own UI now; our temporary
-                    // preview popup has done its job.
                     popupDialog.dismiss()
                 }
             }
         }
+    }
+
+    /**
+     * PDF/print rendering happens asynchronously after printManager.print()
+     * returns — dismissing the preview popup right away (as an earlier
+     * version of this did) can detach its WebView before Android's print
+     * framework has actually finished capturing the content, producing a
+     * broken or empty PDF. This keeps the popup alive until the job is
+     * genuinely done, with a safety timeout so it can never get stuck.
+     */
+    private fun waitForPrintJobThenDismiss(job: android.print.PrintJob, dialog: Dialog) {
+        val handler = android.os.Handler(mainLooper)
+        var elapsedMs = 0
+        val maxWaitMs = 60_000
+        val checkIntervalMs = 400
+        val checkRunnable = object : Runnable {
+            override fun run() {
+                if (!dialog.isShowing) return
+                elapsedMs += checkIntervalMs
+                if (job.isCompleted || job.isFailed || job.isCancelled || elapsedMs >= maxWaitMs) {
+                    dialog.dismiss()
+                } else {
+                    handler.postDelayed(this, checkIntervalMs.toLong())
+                }
+            }
+        }
+        handler.postDelayed(checkRunnable, checkIntervalMs.toLong())
     }
 
     /** Receives Blob contents (Excel export, JSON backup) from the intercepted <a download> click and saves them for real. */
