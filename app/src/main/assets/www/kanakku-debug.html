@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ta">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Debug Tool — கணக்கு தாள்</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  body { background:#0f1117; color:#eef0f5; font-family:sans-serif; max-width:480px; margin:0 auto; padding:20px; }
+  h2 { color:#f0a500; font-size:18px; }
+  .box { background:#171a23; border:1px solid #2a2f3d; border-radius:10px; padding:16px; margin-bottom:16px; }
+  input { width:100%; padding:10px; margin:6px 0; background:#1e222d; border:1px solid #2a2f3d; border-radius:8px; color:#eef0f5; box-sizing:border-box; }
+  button { width:100%; padding:12px; margin-top:8px; border:none; border-radius:8px; background:#f0a500; color:#0f1117; font-weight:bold; font-size:14px; cursor:pointer; }
+  button.b2 { background:#3ecf8e; }
+  button.b3 { background:#262b38; color:#eef0f5; border:1px solid #2a2f3d; }
+  pre { background:#000; color:#3ecf8e; padding:10px; border-radius:8px; font-size:12px; white-space:pre-wrap; word-break:break-all; margin-top:10px; max-height:300px; overflow-y:auto; }
+</style>
+</head>
+<body>
+<h2>🔧 கணக்கு தாள் — Debug Tool</h2>
+
+<div class="box">
+  <label>Email</label>
+  <input type="email" id="email" placeholder="thirumalaiyogi@gmail.com">
+  <label>Password</label>
+  <input type="text" id="password" placeholder="password (இங்கே தெளிவா தெரியும்)">
+
+  <button onclick="testSignup()">1️⃣ Test Signup (account create/check)</button>
+  <button class="b2" onclick="testLogin()">2️⃣ Test Login</button>
+  <button class="b3" onclick="testSession()">3️⃣ Current Session Check</button>
+</div>
+
+<pre id="output">இங்க results தெரியும்...</pre>
+
+<script>
+const SUPABASE_URL      = 'https://saqwrtwdoncrqygqwdgg.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhcXdydHdkb25jcnF5Z3F3ZGdnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY4NTQyNDQsImV4cCI6MjEwMjQzMDI0NH0.G0oTh_QEJQihZkKerQYK-PrG5V_ga5FTRA4co7Nu58E';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+function log(label, obj) {
+  document.getElementById('output').textContent = '=== ' + label + ' ===\n' + JSON.stringify(obj, null, 2);
+}
+
+async function testSignup() {
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  if (!email || !password) { alert('Email + Password போடுங்க'); return; }
+  const { data, error } = await sb.auth.signUp({ email, password });
+  log('SIGNUP RESULT', { data, error });
+}
+
+async function testLogin() {
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  if (!email || !password) { alert('Email + Password போடுங்க'); return; }
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  log('LOGIN RESULT', { data, error });
+}
+
+async function testSession() {
+  const { data, error } = await sb.auth.getSession();
+  log('SESSION CHECK', { data, error });
+}
+</script>
+</body>
+</html>

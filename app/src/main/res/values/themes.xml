@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.KanakkuThaal" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/app_bg</item>
+        <item name="android:statusBarColor">@color/app_bg</item>
+        <item name="android:navigationBarColor">@color/app_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+    </style>
+
+    <!-- Applied only while the activity is launching, so the OS shows the
+         app's own background color instead of a flash of white before the
+         WebView has finished loading the first frame. -->
+    <style name="Theme.KanakkuThaal.Splash" parent="Theme.KanakkuThaal">
+        <item name="android:windowBackground">@color/app_bg</item>
+    </style>
+</resources>

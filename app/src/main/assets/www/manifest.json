@@ -1,0 +1,18 @@
+{
+  "name": "கணக்கு தாள் - Expense Tracker",
+  "short_name": "கணக்கு தாள்",
+  "description": "தமிழில் உங்கள் வருமானம் மற்றும் செலவுகளை எளிதாக நிர்வகிக்கவும்",
+  "start_url": "./index.html",
+  "scope": "./",
+  "id": "/",
+  "display": "standalone",
+  "background_color": "#0f1117",
+  "theme_color": "#0f1117",
+  "orientation": "portrait",
+  "lang": "ta",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

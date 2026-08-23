@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">கணக்கு தாள்</string>
+    <string name="exit_confirm_message">மீண்டும் பின் பொத்தானை அழுத்தி வெளியேறவும்</string>
+    <string name="no_internet_title">இணைய இணைப்பு இல்லை</string>
+    <string name="no_internet_message">தயவுசெய்து உங்கள் இணைய இணைப்பை சரிபார்த்து மீண்டும் முயற்சிக்கவும். சேமிக்கப்பட்ட தரவை ஆஃப்லைனில் பயன்படுத்தலாம்.</string>
+    <string name="retry">மீண்டும் முயற்சிக்கவும்</string>
+</resources>

@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ta">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>கணக்கு தாள் — Admin Panel</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Tamil:wght@400;500;600;700&family=Noto+Serif+Tamil:wght@700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f1117; --surface: #171a23; --surface2: #1e222d; --surface3: #262b38;
+    --border: #2a2f3d; --text: #eef0f5; --text2: #b7bcca; --muted: #6b7394;
+    --gold: #f0a500; --income: #3ecf8e; --expense: #f05c5c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text); font-family: 'Noto Sans Tamil', sans-serif;
+    min-height: 100vh; -webkit-font-smoothing: antialiased;
+  }
+  #wrap { max-width: 640px; margin: 0 auto; padding: 24px 16px 60px; }
+
+  /* ---- LOGIN ---- */
+  #loginBox { max-width: 360px; margin: 60px auto 0; text-align: center; }
+  .logo { font-size: 50px; margin-bottom: 10px; }
+  .title { font-family: 'Noto Serif Tamil', serif; font-size: 22px; font-weight: 700; color: var(--gold); margin-bottom: 4px; }
+  .sub { font-size: 13px; color: var(--muted); margin-bottom: 26px; }
+  .field { margin-bottom: 14px; text-align: left; }
+  .field label { display: block; font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+  .field input {
+    width: 100%; background: var(--surface); border: 1.5px solid var(--border); border-radius: 12px;
+    padding: 13px 14px; color: var(--text); font-size: 15px; outline: none; font-family: inherit;
+  }
+  .field input:focus { border-color: var(--gold); }
+  .btn {
+    width: 100%; padding: 14px; border-radius: 12px; border: none; background: var(--gold);
+    color: #0f1117; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit;
+  }
+  .btn:disabled { opacity: 0.6; }
+  .err { min-height: 18px; font-size: 12.5px; color: var(--expense); margin: 10px 0; }
+
+  /* ---- HEADER ---- */
+  #adminHeader {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border);
+  }
+  #adminHeader .title { font-size: 18px; margin-bottom: 2px; }
+  #adminHeader .sub { margin-bottom: 0; font-size: 12px; }
+  .logout-btn {
+    background: var(--surface); border: 1px solid var(--expense); color: var(--expense);
+    padding: 9px 14px; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+  }
+
+  /* ---- TABS ---- */
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; overflow-x: auto; }
+  .tab {
+    padding: 9px 16px; border-radius: 20px; background: var(--surface); border: 1px solid var(--border);
+    color: var(--muted); font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap;
+  }
+  .tab.active { background: var(--gold); border-color: var(--gold); color: #0f1117; }
+
+  /* ---- USER CARD ---- */
+  .u-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 16px; margin-bottom: 12px;
+  }
+  .u-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .u-email { font-size: 14px; font-weight: 700; word-break: break-all; }
+  .u-date { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .u-badge { font-size: 11px; padding: 4px 10px; border-radius: 20px; font-weight: 700; white-space: nowrap; }
+  .u-badge.pending  { background: rgba(240,165,0,0.15); color: var(--gold); }
+  .u-badge.approved { background: rgba(62,207,142,0.15); color: var(--income); }
+  .u-badge.rejected { background: rgba(240,92,92,0.15); color: var(--expense); }
+  .u-actions { display: flex; gap: 8px; margin-top: 14px; }
+  .u-btn {
+    flex: 1; padding: 10px; border-radius: 10px; font-size: 13px; font-weight: 700;
+    cursor: pointer; font-family: inherit; border: 1px solid var(--border);
+  }
+  .u-btn.approve { background: var(--income); color: #0f1117; border: none; }
+  .u-btn.reject  { background: var(--surface2); color: var(--expense); border-color: var(--expense); }
+  .u-btn.revoke  { background: var(--surface2); color: var(--gold); border-color: var(--gold); }
+
+  .empty { text-align: center; padding: 50px 20px; color: var(--muted); }
+  .empty .e-icon { font-size: 42px; margin-bottom: 10px; }
+  .hidden { display: none !important; }
+  .refresh-row { text-align: right; margin-bottom: 14px; }
+  .refresh-btn {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text2);
+    padding: 8px 14px; border-radius: 10px; font-size: 12.5px; cursor: pointer; font-family: inherit;
+  }
+</style>
+</head>
+<body>
+
+<div id="wrap">
+
+  <!-- LOGIN -->
+  <div id="loginBox">
+    <div class="logo">🛡️</div>
+    <div class="title">Admin Panel</div>
+    <div class="sub">கணக்கு தாள் — User Approval</div>
+    <div class="field">
+      <label>Email</label>
+      <input type="email" id="loginEmail" placeholder="admin@example.com">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="loginPassword" placeholder="Password">
+    </div>
+    <div class="err" id="loginErr"></div>
+    <button class="btn" id="loginBtn" onclick="doLogin()">🔐 உள்நுழை</button>
+  </div>
+
+  <!-- ADMIN DASHBOARD -->
+  <div id="dashBox" class="hidden">
+    <div id="adminHeader">
+      <div>
+        <div class="title">🛡️ Admin Panel</div>
+        <div class="sub" id="adminEmailText">—</div>
+      </div>
+      <button class="logout-btn" onclick="doLogout()">🚪 Logout</button>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" id="tab-pending" onclick="setTab('pending')">⏳ Pending</div>
+      <div class="tab" id="tab-approved" onclick="setTab('approved')">✅ Approved</div>
+      <div class="tab" id="tab-rejected" onclick="setTab('rejected')">❌ Rejected</div>
+      <div class="tab" id="tab-all" onclick="setTab('all')">அனைத்தும்</div>
+    </div>
+
+    <div class="refresh-row">
+      <button class="refresh-btn" onclick="loadUsers()">🔄 Refresh</button>
+    </div>
+
+    <div id="userList"></div>
+  </div>
+
+</div>
+
+<script>
+const SUPABASE_URL      = 'https://saqwrtwdoncrqygqwdgg.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhcXdydHdkb25jcnF5Z3F3ZGdnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY4NTQyNDQsImV4cCI6MjEwMjQzMDI0NH0.G0oTh_QEJQihZkKerQYK-PrG5V_ga5FTRA4co7Nu58E';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let currentTab = 'pending';
+let allProfiles = [];
+function escHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
+}
+
+async function doLogin() {
+  const email    = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errEl    = document.getElementById('loginErr');
+  errEl.textContent = '';
+  if (!email || !password) { errEl.textContent = 'Email மற்றும் Password தேவை'; return; }
+  const btn = document.getElementById('loginBtn');
+  btn.disabled = true; btn.textContent = '⏳ காத்திருக்கவும்...';
+  try {
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    await afterLogin(data.user);
+  } catch (e) {
+    errEl.textContent = e.message || 'Login தோல்வி';
+  }
+  btn.disabled = false; btn.textContent = '🔐 உள்நுழை';
+}
+
+async function afterLogin(user) {
+  const { data: profile, error } = await sb.from('profiles').select('is_admin,email').eq('user_id', user.id).maybeSingle();
+  if (error || !profile || !profile.is_admin) {
+    document.getElementById('loginErr').textContent = '⚠️ இந்த கணக்குக்கு Admin அனுமதி இல்லை.';
+    await sb.auth.signOut();
+    return;
+  }
+  document.getElementById('loginBox').classList.add('hidden');
+  document.getElementById('dashBox').classList.remove('hidden');
+  document.getElementById('adminEmailText').textContent = profile.email || user.email;
+  loadUsers();
+}
+
+async function doLogout() {
+  if (!confirm('Logout செய்யவா?')) return;
+  await sb.auth.signOut();
+  location.reload();
+}
+
+function setTab(t) {
+  currentTab = t;
+  ['pending','approved','rejected','all'].forEach(x =>
+    document.getElementById('tab-'+x).classList.toggle('active', x===t));
+  renderList();
+}
+
+async function loadUsers() {
+  document.getElementById('userList').innerHTML = '<div class="empty">⏳ ஏற்றுகிறது...</div>';
+  const { data, error } = await sb.from('profiles').select('*').order('created_at', { ascending: false });
+  if (error) {
+    document.getElementById('userList').innerHTML = '<div class="empty">⚠️ Load பண்ண முடியவில்லை: ' + error.message + '</div>';
+    return;
+  }
+  allProfiles = data || [];
+  renderList();
+}
+
+function renderList() {
+  let list = allProfiles;
+  if (currentTab !== 'all') list = list.filter(p => p.status === currentTab);
+
+  const el = document.getElementById('userList');
+  if (!list.length) {
+    el.innerHTML = `<div class="empty"><div class="e-icon">📭</div><p>இந்த பிரிவில் யாரும் இல்லை</p></div>`;
+    return;
+  }
+
+  el.innerHTML = list.map(p => {
+    const date = p.created_at ? new Date(p.created_at).toLocaleDateString('ta-IN', {day:'numeric',month:'short',year:'numeric'}) : '';
+    const badgeLabel = p.status === 'pending' ? 'காத்திருக்கிறது' : p.status === 'approved' ? 'அனுமதிக்கப்பட்டது' : 'நிராகரிக்கப்பட்டது';
+    let actions = '';
+    if (p.status === 'pending') {
+      actions = `
+        <div class="u-actions">
+          <button class="u-btn approve" onclick="setStatus('${p.user_id}','approved')">✅ Approve</button>
+          <button class="u-btn reject" onclick="setStatus('${p.user_id}','rejected')">❌ Reject</button>
+        </div>`;
+    } else if (p.status === 'approved') {
+      actions = `
+        <div class="u-actions">
+          <button class="u-btn revoke" onclick="setStatus('${p.user_id}','rejected')">🚫 அணுகல் நீக்கு</button>
+        </div>`;
+    } else {
+      actions = `
+        <div class="u-actions">
+          <button class="u-btn approve" onclick="setStatus('${p.user_id}','approved')">✅ மீண்டும் Approve</button>
+        </div>`;
+    }
+    return `<div class="u-card">
+      <div class="u-top">
+        <div>
+          <div class="u-email">${escHtml(p.email || p.user_id)}${p.is_admin ? ' 🛡️' : ''}</div>
+          <div class="u-date">பதிவு: ${date}</div>
+        </div>
+        <div class="u-badge ${p.status}">${badgeLabel}</div>
+      </div>
+      ${actions}
+    </div>`;
+  }).join('');
+}
+
+async function setStatus(userId, status) {
+  const label = status === 'approved' ? 'Approve' : 'Reject';
+  if (!confirm(`இந்த பயனரை ${label} பண்ணவா?`)) return;
+  const { error } = await sb.from('profiles').update({ status }).eq('user_id', userId);
+  if (error) { alert('பிழை: ' + error.message); return; }
+  await loadUsers();
+}
+
+// ---- boot ----
+(async function boot() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) await afterLogin(session.user);
+})();
+</script>
+</body>
+</html>
