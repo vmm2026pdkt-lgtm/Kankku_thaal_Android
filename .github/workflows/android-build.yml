@@ -14,6 +14,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # `if:` conditions can't reference the secrets context directly (GitHub
+      # Actions rejects it with "Unrecognized named-value: 'secrets'"), so the
+      # presence check is done here instead and read back via env.HAS_KEYSTORE.
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
 
     steps:
       - name: Checkout
@@ -40,7 +45,7 @@ jobs:
       # them, assembleRelease still succeeds, signed with the debug key, so
       # CI never breaks for lack of a production keystore.
       - name: Decode release keystore
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        if: ${{ env.HAS_KEYSTORE == 'true' }}
         run: |
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release.keystore
           echo "KEYSTORE_PATH=$(pwd)/release.keystore" >> $GITHUB_ENV
