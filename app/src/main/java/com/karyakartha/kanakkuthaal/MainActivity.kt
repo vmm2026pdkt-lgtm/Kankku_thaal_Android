@@ -25,6 +25,7 @@ import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
@@ -127,6 +128,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         setContentView(R.layout.activity_main)
 
         webView = findViewById(R.id.webView)
@@ -202,8 +204,9 @@ class MainActivity : AppCompatActivity() {
         webView.isFocusableInTouchMode = true
         webView.requestFocus(View.FOCUS_DOWN)
         webView.setOnTouchListener { v, event ->
-            if (event.action == MotionEvent.ACTION_DOWN || event.action == MotionEvent.ACTION_UP) {
-                if (!v.hasFocus()) v.requestFocus()
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> v.requestFocusFromTouch()
+                MotionEvent.ACTION_UP -> if (!v.hasFocus()) v.requestFocus()
             }
             false
         }
