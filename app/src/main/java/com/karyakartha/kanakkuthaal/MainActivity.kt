@@ -353,6 +353,9 @@ class MainActivity : AppCompatActivity() {
             )
             popup.settings.javaScriptEnabled = true
             popup.settings.domStorageEnabled = true
+            popup.settings.useWideViewPort = true
+            popup.settings.loadWithOverviewMode = true
+            popup.settings.textZoom = 100
 
             // The popup must actually be shown (not just held in memory) or
             // Android's print/PDF renderer has nothing properly laid out to
@@ -423,7 +426,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 try {
                     val bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
-                    val resolvedMime = mimeType.ifBlank { "application/octet-stream" }
+                    val resolvedMime = resolveMimeType(fileName, mimeType)
                     val uri = saveBytesToDownloads(bytes, fileName, resolvedMime)
                     Toast.makeText(this@MainActivity, "பதிவிறக்கம் முடிந்தது: $fileName", Toast.LENGTH_SHORT).show()
                     notifyDownloadComplete(fileName, uri, resolvedMime)
@@ -474,8 +477,9 @@ class MainActivity : AppCompatActivity() {
             } else {
                 Uri.decode(payload).toByteArray(Charsets.UTF_8)
             }
-            val guessedMime = mimeType ?: meta.substringBefore(';')
-            val fileName = URLUtil.guessFileName(dataUri, contentDisposition, guessedMime)
+            val rawMimeHint = mimeType ?: meta.substringBefore(';')
+            val fileName = URLUtil.guessFileName(dataUri, contentDisposition, rawMimeHint)
+            val guessedMime = resolveMimeType(fileName, rawMimeHint)
             val uri = saveBytesToDownloads(bytes, fileName, guessedMime)
             Toast.makeText(this, "பதிவிறக்கம் முடிந்தது: $fileName", Toast.LENGTH_SHORT).show()
             notifyDownloadComplete(fileName, uri, guessedMime)
@@ -483,6 +487,29 @@ class MainActivity : AppCompatActivity() {
             Log.e("KanakkuThaal", "data: URI save failed", e)
             Toast.makeText(this, "சேமிப்பு தோல்வியடைந்தது", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * The web app's own export code sometimes hands us a generic
+     * "application/octet-stream" Blob type (this is normal — SheetJS's
+     * XLSX.writeFile does this for browser-compatibility reasons). A generic
+     * MIME type means Android can't tell apps like Google Sheets that the
+     * file is actually an .xlsx, so they don't show up as an option to open
+     * it. Preferring a well-known MIME type based on the file's own
+     * extension fixes that without needing anything from the caller.
+     */
+    private fun resolveMimeType(fileName: String, reportedMime: String?): String {
+        val ext = fileName.substringAfterLast('.', "").lowercase()
+        val knownMimeByExtension = mapOf(
+            "xlsx" to "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xls" to "application/vnd.ms-excel",
+            "csv" to "text/csv",
+            "json" to "application/json",
+            "pdf" to "application/pdf"
+        )
+        knownMimeByExtension[ext]?.let { return it }
+        if (!reportedMime.isNullOrBlank() && reportedMime != "application/octet-stream") return reportedMime
+        return android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
     }
 
     /**
@@ -667,11 +694,27 @@ class MainActivity : AppCompatActivity() {
         // Replaces window.print inside the blank print-preview popup the app
         // opens for PDF export, routing it to Android's native print system
         // instead of a no-op (WebView has no default UI for window.print()).
+        // The app writes a fresh document into this popup via document.write()
+        // *after* window.open() returns, which can wipe out a one-shot
+        // override depending on exact WebView/Chromium timing — so this
+        // reinstalls the hook every 150ms for a few seconds, comfortably
+        // covering both the app's later document.write() and its own
+        // `setTimeout(() => win.print(), 800)` auto-print call.
         private const val OVERRIDE_WINDOW_PRINT_JS = """
             (function() {
-                window.print = function() {
-                    if (window.AndroidPrintBridge) { window.AndroidPrintBridge.requestPrint(); }
-                };
+                function installPrintHook() {
+                    window.print = function() {
+                        if (window.AndroidPrintBridge) { window.AndroidPrintBridge.requestPrint(); }
+                    };
+                }
+                installPrintHook();
+                if (window.__kanakkuPrintHookTimer) return;
+                var tries = 0;
+                window.__kanakkuPrintHookTimer = setInterval(function() {
+                    installPrintHook();
+                    tries++;
+                    if (tries > 40) { clearInterval(window.__kanakkuPrintHookTimer); }
+                }, 150);
             })();
         """
     }
