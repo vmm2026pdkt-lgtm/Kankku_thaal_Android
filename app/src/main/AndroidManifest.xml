@@ -8,6 +8,10 @@
          intentionally omitted per the "no unnecessary permissions" rule. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Lets the app show a "download complete" notification for Excel/backup
+         exports, the same way a browser would. Android 13+ only; the app
+         still works fine (just silently, via Toast) if this is denied. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Needed only on Android 9 (API 28) and below to let the browser-style
          file <input> save picked files / let downloads write to shared storage.

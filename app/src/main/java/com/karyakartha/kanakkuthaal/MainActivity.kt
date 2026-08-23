@@ -1,10 +1,15 @@
 package com.karyakartha.kanakkuthaal
 
 import android.app.Activity
+import android.app.Dialog
 import android.app.DownloadManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
@@ -16,7 +21,9 @@ import android.print.PrintAttributes
 import android.print.PrintManager
 import android.provider.MediaStore
 import android.util.Log
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
@@ -31,7 +38,12 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.webkit.WebResourceErrorCompat
 import androidx.webkit.ServiceWorkerClientCompat
 import androidx.webkit.ServiceWorkerControllerCompat
@@ -98,6 +110,9 @@ class MainActivity : AppCompatActivity() {
         callback.onReceiveValue(uris)
     }
 
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op either way */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -113,6 +128,7 @@ class MainActivity : AppCompatActivity() {
         configureWebView()
         configureServiceWorker()
         configureBackNavigation()
+        requestNotificationPermissionIfNeeded()
 
         if (savedInstanceState != null) {
             webView.restoreState(savedInstanceState)
@@ -133,6 +149,15 @@ class MainActivity : AppCompatActivity() {
             webView.reload()
         } else {
             webView.loadUrl(startUrl)
+        }
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val permission = android.Manifest.permission.POST_NOTIFICATIONS
+            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(permission)
+            }
         }
     }
 
@@ -157,6 +182,19 @@ class MainActivity : AppCompatActivity() {
         settings.mediaPlaybackRequiresUserGesture = false
         settings.setSupportMultipleWindows(true)
         settings.javaScriptCanOpenWindowsAutomatically = true
+
+        // Without this, taps on <input>/<textarea> fields can fail to bring
+        // up the keyboard or register keystrokes at all — a well-known
+        // WebView quirk where the view never actually takes input focus.
+        webView.isFocusable = true
+        webView.isFocusableInTouchMode = true
+        webView.requestFocus(View.FOCUS_DOWN)
+        webView.setOnTouchListener { v, event ->
+            if (event.action == MotionEvent.ACTION_DOWN || event.action == MotionEvent.ACTION_UP) {
+                if (!v.hasFocus()) v.requestFocus()
+            }
+            false
+        }
 
         // Keep the app's own responsive CSS in charge; don't let the OS
         // rescale text on top of it (matches "no unwanted zoom" requirement).
@@ -309,9 +347,23 @@ class MainActivity : AppCompatActivity() {
             resultMsg: Message
         ): Boolean {
             val popup = WebView(this@MainActivity)
+            popup.layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
             popup.settings.javaScriptEnabled = true
             popup.settings.domStorageEnabled = true
-            popup.addJavascriptInterface(PrintBridge(popup), "AndroidPrintBridge")
+
+            // The popup must actually be shown (not just held in memory) or
+            // Android's print/PDF renderer has nothing properly laid out to
+            // capture, and the user never sees the "print preview" the app
+            // intends to show while it prepares the PDF.
+            val popupDialog = Dialog(this@MainActivity, android.R.style.Theme_DeviceDefault_NoActionBar)
+            popupDialog.setContentView(popup)
+            popupDialog.setOnDismissListener { popup.destroy() }
+            popupDialog.show()
+
+            popup.addJavascriptInterface(PrintBridge(popup, popupDialog), "AndroidPrintBridge")
             popup.webViewClient = object : WebViewClientCompat() {
                 override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean {
                     val uri = request.url
@@ -343,7 +395,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Lets the "print preview" popup's window.print() open Android's real print/Save-as-PDF dialog. */
-    private inner class PrintBridge(private val target: WebView) {
+    private inner class PrintBridge(private val target: WebView, private val popupDialog: Dialog) {
         @JavascriptInterface
         fun requestPrint() {
             runOnUiThread {
@@ -355,6 +407,10 @@ class MainActivity : AppCompatActivity() {
                 } catch (e: Exception) {
                     Log.e("KanakkuThaal", "Print failed", e)
                     Toast.makeText(this@MainActivity, "அச்சிட முடியவில்லை", Toast.LENGTH_SHORT).show()
+                } finally {
+                    // The system print sheet has its own UI now; our temporary
+                    // preview popup has done its job.
+                    popupDialog.dismiss()
                 }
             }
         }
@@ -367,8 +423,10 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 try {
                     val bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
-                    saveBytesToDownloads(bytes, fileName, mimeType.ifBlank { "application/octet-stream" })
-                    Toast.makeText(this@MainActivity, "சேமிக்கப்பட்டது: $fileName", Toast.LENGTH_SHORT).show()
+                    val resolvedMime = mimeType.ifBlank { "application/octet-stream" }
+                    val uri = saveBytesToDownloads(bytes, fileName, resolvedMime)
+                    Toast.makeText(this@MainActivity, "பதிவிறக்கம் முடிந்தது: $fileName", Toast.LENGTH_SHORT).show()
+                    notifyDownloadComplete(fileName, uri, resolvedMime)
                 } catch (e: Exception) {
                     Log.e("KanakkuThaal", "saveBase64 failed", e)
                     Toast.makeText(this@MainActivity, "சேமிப்பு தோல்வியடைந்தது", Toast.LENGTH_SHORT).show()
@@ -418,8 +476,9 @@ class MainActivity : AppCompatActivity() {
             }
             val guessedMime = mimeType ?: meta.substringBefore(';')
             val fileName = URLUtil.guessFileName(dataUri, contentDisposition, guessedMime)
-            saveBytesToDownloads(bytes, fileName, guessedMime)
-            Toast.makeText(this, "சேமிக்கப்பட்டது: $fileName", Toast.LENGTH_SHORT).show()
+            val uri = saveBytesToDownloads(bytes, fileName, guessedMime)
+            Toast.makeText(this, "பதிவிறக்கம் முடிந்தது: $fileName", Toast.LENGTH_SHORT).show()
+            notifyDownloadComplete(fileName, uri, guessedMime)
         } catch (e: Exception) {
             Log.e("KanakkuThaal", "data: URI save failed", e)
             Toast.makeText(this, "சேமிப்பு தோல்வியடைந்தது", Toast.LENGTH_SHORT).show()
@@ -430,10 +489,11 @@ class MainActivity : AppCompatActivity() {
      * Saves bytes to the public Downloads folder so they show up in the
      * device's Files app / Downloads app like any normal browser download —
      * via MediaStore on Android 10+, and a direct file write (with the
-     * legacy storage permission) on older versions.
+     * legacy storage permission) on older versions. Returns a Uri suitable
+     * for viewing/sharing the saved file.
      */
-    private fun saveBytesToDownloads(bytes: ByteArray, fileName: String, mimeType: String) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    private fun saveBytesToDownloads(bytes: ByteArray, fileName: String, mimeType: String): Uri {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                 put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
@@ -442,13 +502,54 @@ class MainActivity : AppCompatActivity() {
             val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                 ?: throw java.io.IOException("MediaStore insert failed")
             contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+            uri
         } else {
             @Suppress("DEPRECATION")
             val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             if (!dir.exists()) dir.mkdirs()
             val file = java.io.File(dir, fileName)
             file.outputStream().use { it.write(bytes) }
+            FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
         }
+    }
+
+    /**
+     * Posts a "download complete" notification, same as a real browser would,
+     * so saving Excel/backup files actually *feels* like a download instead
+     * of silently succeeding with only a passing Toast.
+     */
+    private fun notifyDownloadComplete(fileName: String, uri: Uri, mimeType: String) {
+        val channelId = "downloads"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(NotificationManager::class.java)
+            if (nm.getNotificationChannel(channelId) == null) {
+                nm.createNotificationChannel(
+                    NotificationChannel(channelId, "பதிவிறக்கங்கள்", NotificationManager.IMPORTANCE_DEFAULT)
+                )
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return // user hasn't granted notification permission; the Toast is the fallback
+        }
+        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mimeType)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, fileName.hashCode(), viewIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("பதிவிறக்கம் முடிந்தது")
+            .setContentText(fileName)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+        NotificationManagerCompat.from(this).notify(fileName.hashCode(), notification)
     }
 
     /**
@@ -485,7 +586,13 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         webView.onResume()
+        webView.requestFocus(View.FOCUS_DOWN)
         CookieManager.getInstance().flush()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) webView.requestFocus(View.FOCUS_DOWN)
     }
 
     override fun onPause() {
