@@ -3,15 +3,22 @@ package com.karyakartha.kanakkuthaal
 import android.app.Activity
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
+import android.content.ContentValues
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Message
+import android.print.PrintAttributes
+import android.print.PrintManager
+import android.provider.MediaStore
 import android.util.Log
 import android.view.View
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
@@ -148,7 +155,8 @@ class MainActivity : AppCompatActivity() {
         settings.loadWithOverviewMode = true
         settings.cacheMode = WebSettings.LOAD_DEFAULT
         settings.mediaPlaybackRequiresUserGesture = false
-        settings.setSupportMultipleWindows(false)
+        settings.setSupportMultipleWindows(true)
+        settings.javaScriptCanOpenWindowsAutomatically = true
 
         // Keep the app's own responsive CSS in charge; don't let the OS
         // rescale text on top of it (matches "no unwanted zoom" requirement).
@@ -161,6 +169,12 @@ class MainActivity : AppCompatActivity() {
 
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+
+        // Bridges the app's existing Blob-based export flows (Excel via
+        // XLSX.writeFile, JSON backup via URL.createObjectURL) to real
+        // Android file saving. See BLOB_DOWNLOAD_INTERCEPT_JS below for why
+        // this is necessary — WebView can't save blob: URLs on its own.
+        webView.addJavascriptInterface(DownloadBridge(), "AndroidDownloadBridge")
 
         webView.webViewClient = AppWebViewClient()
         webView.webChromeClient = AppWebChromeClient()
@@ -235,6 +249,7 @@ class MainActivity : AppCompatActivity() {
             hasLoadedOnce = true
             offlineBanner.visibility = View.GONE
             webView.visibility = View.VISIBLE
+            view.evaluateJavascript(BLOB_DOWNLOAD_INTERCEPT_JS, null)
         }
 
         override fun onReceivedError(
@@ -275,6 +290,89 @@ class MainActivity : AppCompatActivity() {
             } catch (e: ActivityNotFoundException) {
                 fileUploadCallback = null
                 false
+            }
+        }
+
+        /**
+         * The app calls `window.open(...)` in two situations:
+         *  1. window.open('https://wa.me/...', '_blank') — a real link. We
+         *     grab the eventual URL and hand it to a real app/browser.
+         *  2. window.open('', '_blank', 'width=900,height=700') — the blank
+         *     "print preview" popup used for PDF export. We give it a real
+         *     WebView, whose window.print() is wired to Android's native
+         *     Print framework (lets the user "Save as PDF" or print for real).
+         */
+        override fun onCreateWindow(
+            view: WebView,
+            isDialog: Boolean,
+            isUserGesture: Boolean,
+            resultMsg: Message
+        ): Boolean {
+            val popup = WebView(this@MainActivity)
+            popup.settings.javaScriptEnabled = true
+            popup.settings.domStorageEnabled = true
+            popup.addJavascriptInterface(PrintBridge(popup), "AndroidPrintBridge")
+            popup.webViewClient = object : WebViewClientCompat() {
+                override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean {
+                    val uri = request.url
+                    if (uri.toString() != "about:blank") {
+                        try {
+                            startActivity(Intent(Intent.ACTION_VIEW, uri))
+                        } catch (e: ActivityNotFoundException) {
+                            Toast.makeText(this@MainActivity, "இதைத் திறக்க பொருத்தமான ஆப் இல்லை", Toast.LENGTH_SHORT).show()
+                        }
+                        return true
+                    }
+                    return false
+                }
+
+                override fun onPageFinished(v: WebView, url: String?) {
+                    super.onPageFinished(v, url)
+                    v.evaluateJavascript(OVERRIDE_WINDOW_PRINT_JS, null)
+                }
+            }
+            // Cover the case where the calling JS writes content and calls
+            // print() before the async onPageFinished callback above fires.
+            popup.evaluateJavascript(OVERRIDE_WINDOW_PRINT_JS, null)
+
+            val transport = resultMsg.obj as WebView.WebViewTransport
+            transport.webView = popup
+            resultMsg.sendToTarget()
+            return true
+        }
+    }
+
+    /** Lets the "print preview" popup's window.print() open Android's real print/Save-as-PDF dialog. */
+    private inner class PrintBridge(private val target: WebView) {
+        @JavascriptInterface
+        fun requestPrint() {
+            runOnUiThread {
+                try {
+                    val printManager = getSystemService(PRINT_SERVICE) as PrintManager
+                    val jobName = "KanakkuThaal_${System.currentTimeMillis()}"
+                    val adapter = target.createPrintDocumentAdapter(jobName)
+                    printManager.print(jobName, adapter, PrintAttributes.Builder().build())
+                } catch (e: Exception) {
+                    Log.e("KanakkuThaal", "Print failed", e)
+                    Toast.makeText(this@MainActivity, "அச்சிட முடியவில்லை", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /** Receives Blob contents (Excel export, JSON backup) from the intercepted <a download> click and saves them for real. */
+    private inner class DownloadBridge {
+        @JavascriptInterface
+        fun saveBase64(base64Data: String, fileName: String, mimeType: String) {
+            runOnUiThread {
+                try {
+                    val bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
+                    saveBytesToDownloads(bytes, fileName, mimeType.ifBlank { "application/octet-stream" })
+                    Toast.makeText(this@MainActivity, "சேமிக்கப்பட்டது: $fileName", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Log.e("KanakkuThaal", "saveBase64 failed", e)
+                    Toast.makeText(this@MainActivity, "சேமிப்பு தோல்வியடைந்தது", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -320,13 +418,36 @@ class MainActivity : AppCompatActivity() {
             }
             val guessedMime = mimeType ?: meta.substringBefore(';')
             val fileName = URLUtil.guessFileName(dataUri, contentDisposition, guessedMime)
-            val downloadsDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-            val outFile = java.io.File(downloadsDir, fileName)
-            outFile.outputStream().use { it.write(bytes) }
+            saveBytesToDownloads(bytes, fileName, guessedMime)
             Toast.makeText(this, "சேமிக்கப்பட்டது: $fileName", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Log.e("KanakkuThaal", "data: URI save failed", e)
             Toast.makeText(this, "சேமிப்பு தோல்வியடைந்தது", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * Saves bytes to the public Downloads folder so they show up in the
+     * device's Files app / Downloads app like any normal browser download —
+     * via MediaStore on Android 10+, and a direct file write (with the
+     * legacy storage permission) on older versions.
+     */
+    private fun saveBytesToDownloads(bytes: ByteArray, fileName: String, mimeType: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw java.io.IOException("MediaStore insert failed")
+            contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+        } else {
+            @Suppress("DEPRECATION")
+            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (!dir.exists()) dir.mkdirs()
+            val file = java.io.File(dir, fileName)
+            file.outputStream().use { it.write(bytes) }
         }
     }
 
@@ -393,6 +514,57 @@ class MainActivity : AppCompatActivity() {
                     return true;
                 }
                 return false;
+            })();
+        """
+
+        // The app's Excel export (XLSX.writeFile) and JSON backup export both
+        // build a Blob, turn it into a blob: URL, and click a hidden
+        // <a download> to trigger a save — a pattern real browsers handle,
+        // but a bare WebView can't (DownloadManager can't fetch blob: URLs,
+        // and WebView doesn't surface these clicks as real downloads at all).
+        // This patches HTMLAnchorElement.click so that specific pattern is
+        // caught, read back into bytes, and handed to the native side —
+        // without touching index.html/admin.html themselves. Every other
+        // anchor click behaves exactly as before.
+        private const val BLOB_DOWNLOAD_INTERCEPT_JS = """
+            (function() {
+                if (window.__kanakkuBlobHooked) return;
+                window.__kanakkuBlobHooked = true;
+                var originalClick = HTMLAnchorElement.prototype.click;
+                HTMLAnchorElement.prototype.click = function() {
+                    try {
+                        var href = this.href || '';
+                        var hasDownload = this.hasAttribute('download');
+                        if (hasDownload && href.indexOf('blob:') === 0 && window.AndroidDownloadBridge) {
+                            var fileName = this.getAttribute('download') || 'download';
+                            var anchor = this;
+                            fetch(href).then(function(res) { return res.blob(); }).then(function(blob) {
+                                var reader = new FileReader();
+                                reader.onloadend = function() {
+                                    var result = reader.result || '';
+                                    var base64 = result.indexOf(',') >= 0 ? result.split(',')[1] : '';
+                                    window.AndroidDownloadBridge.saveBase64(base64, fileName, blob.type || '');
+                                };
+                                reader.readAsDataURL(blob);
+                            }).catch(function() {
+                                originalClick.apply(anchor, []);
+                            });
+                            return;
+                        }
+                    } catch (e) { /* fall through to normal click */ }
+                    return originalClick.apply(this, arguments);
+                };
+            })();
+        """
+
+        // Replaces window.print inside the blank print-preview popup the app
+        // opens for PDF export, routing it to Android's native print system
+        // instead of a no-op (WebView has no default UI for window.print()).
+        private const val OVERRIDE_WINDOW_PRINT_JS = """
+            (function() {
+                window.print = function() {
+                    if (window.AndroidPrintBridge) { window.AndroidPrintBridge.requestPrint(); }
+                };
             })();
         """
     }
