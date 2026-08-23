@@ -204,9 +204,16 @@ class MainActivity : AppCompatActivity() {
         webView.isFocusableInTouchMode = true
         webView.requestFocus(View.FOCUS_DOWN)
         webView.setOnTouchListener { v, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> v.requestFocusFromTouch()
-                MotionEvent.ACTION_UP -> if (!v.hasFocus()) v.requestFocus()
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                // Deliberately unconditional: on a fresh cold launch, the
+                // WebView already reports hasFocus()==true (we grabbed it
+                // proactively above), which used to make this a no-op on the
+                // very first tap and skip the actual IME handshake — the
+                // keyboard would then only start working from the *second*
+                // tap onward. Clearing and re-requesting every time forces
+                // that handshake to happen on every tap, including the first.
+                v.clearFocus()
+                v.requestFocus()
             }
             false
         }
