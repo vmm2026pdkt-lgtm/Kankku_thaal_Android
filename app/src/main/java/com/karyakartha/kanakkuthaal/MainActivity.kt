@@ -10,6 +10,7 @@ import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
@@ -53,16 +54,16 @@ import androidx.webkit.WebViewClientCompat
 import androidx.webkit.WebViewFeature
 
 /**
- * Hosts the EXISTING கணக்கு தாள் web app (index.html / admin.html) unchanged,
- * inside a WebView. This activity intentionally contains no app UI of its own
- * beyond a tiny offline banner — every screen the user sees is the original
- * HTML/CSS/JS from the uploaded project, served as-is.
+ * Hosts the EXISTING கணக்கு தாள் web app unchanged, inside a WebView. This
+ * activity intentionally contains no app UI of its own beyond a tiny offline
+ * banner — every screen the user sees is the original HTML/CSS/JS.
  *
- * Local assets are served over https://appassets.androidplatform.net using
- * WebViewAssetLoader (not file://) so that:
- *  - relative fetch()/XHR calls behave exactly as they do on a real https origin
- *  - the existing Supabase client and CDN <script> tags keep working unmodified
- *  - the existing service worker (sw.js) can register and run
+ * By default it loads the live site (kanakku-thaal.netlify.app) directly,
+ * so behavior is guaranteed identical to opening that link in a normal
+ * mobile browser. A local, bundled copy under assets/www/ (served over
+ * https://appassets.androidplatform.net via WebViewAssetLoader) is kept only
+ * as a fallback for the rare case of a first-ever launch with zero internet,
+ * before the site's own service worker has had a chance to cache anything.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -72,16 +73,27 @@ class MainActivity : AppCompatActivity() {
 
     private var backPressedOnce = false
     private var hasLoadedOnce = false
+    private var pageLoadFailed = false
 
-    /** Entry point inside the bundled web app. Change if the project's home file differs. */
-    private val startUrl = "https://appassets.androidplatform.net/assets/www/index.html"
-    private val appOrigin = "https://appassets.androidplatform.net"
+    /**
+     * Loads the real, live site — not the locally-bundled copy. Serving
+     * bundled files through WebViewAssetLoader's pseudo-origin
+     * (appassets.androidplatform.net) is close to a real browser, but not
+     * identical, and was implicated in a stubborn text-input bug that never
+     * happened on the actual Netlify site. Pointing straight at the live URL
+     * guarantees the app behaves exactly like "open this link in a browser",
+     * which is what was actually asked for. sw.js still gives real offline
+     * caching after the first successful visit, same as any PWA.
+     */
+    private val startUrl = "https://kanakku-thaal.netlify.app/index.html"
+    private val localFallbackUrl = "https://appassets.androidplatform.net/assets/www/index.html"
 
     // Hosts the app itself already talks to (Supabase, CDNs, fonts, WhatsApp).
     // Anything else that ever asks to be a top-level navigation is treated as
     // "external" and handed off to a real browser/app instead of loading
     // inside our WebView.
     private val knownAppHosts = setOf(
+        "kanakku-thaal.netlify.app",
         "appassets.androidplatform.net",
         "saqwrtwdoncrqygqwdgg.supabase.co",
         "cdn.jsdelivr.net",
@@ -282,8 +294,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+            super.onPageStarted(view, url, favicon)
+            pageLoadFailed = false
+        }
+
         override fun onPageFinished(view: WebView, url: String?) {
             super.onPageFinished(view, url)
+            if (pageLoadFailed) return // this onPageFinished belongs to the browser's own error page, not real content
             hasLoadedOnce = true
             offlineBanner.visibility = View.GONE
             webView.visibility = View.VISIBLE
@@ -299,9 +317,18 @@ class MainActivity : AppCompatActivity() {
             // Only react to a failed top-level page load, not a failed sub-resource
             // (e.g. one CDN script briefly unreachable shouldn't blank the whole app,
             // especially once the service worker has things cached).
-            if (request.isForMainFrame && !hasLoadedOnce) {
+            if (!request.isForMainFrame) return
+            pageLoadFailed = true
+            if (hasLoadedOnce) return
+            if (isOnline()) {
                 offlineBanner.visibility = View.VISIBLE
                 webView.visibility = View.GONE
+            } else {
+                // No internet at all on the very first launch, before the
+                // service worker has ever had a chance to cache anything —
+                // fall back to the bundled local copy so the app still opens
+                // with something instead of a blank/offline screen.
+                view.loadUrl(localFallbackUrl)
             }
         }
     }
