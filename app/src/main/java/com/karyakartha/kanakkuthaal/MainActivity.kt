@@ -432,12 +432,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Generates the PDF directly and saves it to Downloads — the same
-     * experience as the Excel/backup exports — instead of routing through
-     * Android's system Print picker (letting the user choose a printer or
-     * "Save as PDF"), which wasn't reliably surfacing on this device.
-     */
+    /** Lets the "print preview" popup's window.print() open Android's real print/Save-as-PDF dialog. */
     private inner class PrintBridge(private val target: WebView, private val popupDialog: Dialog) {
         private var printRequested = false
 
@@ -446,86 +441,47 @@ class MainActivity : AppCompatActivity() {
             if (printRequested) return
             printRequested = true
             runOnUiThread {
-                val fileName = "kanakku_report_${System.currentTimeMillis()}.pdf"
-                exportWebViewToPdf(target, fileName) { popupDialog.dismiss() }
+                Toast.makeText(this@MainActivity, "அச்சிடு தயார் செய்யப்படுகிறது...", Toast.LENGTH_SHORT).show()
+                try {
+                    val printManager = getSystemService(PRINT_SERVICE) as android.print.PrintManager
+                    val jobName = "KanakkuThaal_${System.currentTimeMillis()}"
+                    val adapter = target.createPrintDocumentAdapter(jobName)
+                    val job = printManager.print(jobName, adapter, PrintAttributes.Builder().build())
+                    Log.i("KanakkuThaal", "Print job created: ${job.info?.label}, state=${job.info?.state}")
+                    waitForPrintJobThenDismiss(job, popupDialog)
+                } catch (e: Exception) {
+                    Log.e("KanakkuThaal", "Print failed", e)
+                    Toast.makeText(this@MainActivity, "அச்சிட முடியவில்லை: ${e.message}", Toast.LENGTH_LONG).show()
+                    popupDialog.dismiss()
+                }
             }
         }
     }
 
     /**
-     * Renders a WebView's current content to a real PDF file and saves it to
-     * Downloads, using the same PrintDocumentAdapter machinery the system
-     * Print picker uses internally — but writing straight to our own file
-     * instead of handing control to that picker UI.
+     * PDF/print rendering happens asynchronously after printManager.print()
+     * returns — dismissing the preview popup right away can detach its
+     * WebView before Android's print framework has actually finished
+     * capturing the content. This keeps the popup alive until the job is
+     * genuinely done, with a safety timeout so it can never get stuck.
      */
-    private fun exportWebViewToPdf(target: WebView, fileName: String, onDone: () -> Unit) {
-        val adapter = target.createPrintDocumentAdapter(fileName)
-        val attributes = PrintAttributes.Builder()
-            .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
-            .setResolution(android.print.PrintAttributes.Resolution("kanakku_pdf", "kanakku_pdf", 300, 300))
-            .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
-            .build()
-
-        adapter.onLayout(null, attributes, null, object : android.print.PrintDocumentAdapter.LayoutResultCallback() {
-            override fun onLayoutFinished(info: android.print.PrintDocumentInfo?, changed: Boolean) {
-                try {
-                    val tempFile = java.io.File(cacheDir, fileName)
-                    val pfd = android.os.ParcelFileDescriptor.open(
-                        tempFile,
-                        android.os.ParcelFileDescriptor.MODE_CREATE or
-                            android.os.ParcelFileDescriptor.MODE_READ_WRITE or
-                            android.os.ParcelFileDescriptor.MODE_TRUNCATE
-                    )
-                    adapter.onWrite(
-                        arrayOf(android.print.PageRange.ALL_PAGES), pfd, null,
-                        object : android.print.PrintDocumentAdapter.WriteResultCallback() {
-                            override fun onWriteFinished(pages: Array<out android.print.PageRange>?) {
-                                pfd.close()
-                                runOnUiThread {
-                                    try {
-                                        val bytes = tempFile.readBytes()
-                                        tempFile.delete()
-                                        val uri = saveBytesToDownloads(bytes, fileName, "application/pdf")
-                                        Toast.makeText(this@MainActivity, "பதிவிறக்கம் முடிந்தது: $fileName", Toast.LENGTH_SHORT).show()
-                                        notifyDownloadComplete(fileName, uri, "application/pdf")
-                                    } catch (e: Exception) {
-                                        Log.e("KanakkuThaal", "PDF save failed", e)
-                                        Toast.makeText(this@MainActivity, "PDF சேமிப்பு தோல்வியடைந்தது", Toast.LENGTH_SHORT).show()
-                                    }
-                                    onDone()
-                                }
-                            }
-
-                            override fun onWriteFailed(error: CharSequence?) {
-                                Log.e("KanakkuThaal", "PDF write failed: $error")
-                                runOnUiThread {
-                                    Toast.makeText(this@MainActivity, "PDF உருவாக்க முடியவில்லை", Toast.LENGTH_SHORT).show()
-                                    onDone()
-                                }
-                            }
-                        }
-                    )
-                } catch (e: Exception) {
-                    Log.e("KanakkuThaal", "PDF layout/write setup failed", e)
-                    runOnUiThread {
-                        Toast.makeText(this@MainActivity, "PDF உருவாக்க முடியவில்லை", Toast.LENGTH_SHORT).show()
-                        onDone()
-                    }
+    private fun waitForPrintJobThenDismiss(job: android.print.PrintJob, dialog: Dialog) {
+        val handler = android.os.Handler(mainLooper)
+        var elapsedMs = 0
+        val maxWaitMs = 60_000
+        val checkIntervalMs = 400
+        val checkRunnable = object : Runnable {
+            override fun run() {
+                if (!dialog.isShowing) return
+                elapsedMs += checkIntervalMs
+                if (job.isCompleted || job.isFailed || job.isCancelled || elapsedMs >= maxWaitMs) {
+                    dialog.dismiss()
+                } else {
+                    handler.postDelayed(this, checkIntervalMs.toLong())
                 }
             }
-
-            override fun onLayoutFailed(error: CharSequence?) {
-                Log.e("KanakkuThaal", "PDF layout failed: $error")
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, "PDF தயார் செய்ய முடியவில்லை", Toast.LENGTH_SHORT).show()
-                    onDone()
-                }
-            }
-
-            override fun onLayoutCancelled() {
-                runOnUiThread { onDone() }
-            }
-        }, null)
+        }
+        handler.postDelayed(checkRunnable, checkIntervalMs.toLong())
     }
 
     /** Receives Blob contents (Excel export, JSON backup) from the intercepted <a download> click and saves them for real. */
